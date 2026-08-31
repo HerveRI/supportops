@@ -14,7 +14,7 @@ from app.core.security import (
     verify_password,
 )
 from app.db.session import get_db_session
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.auth import LoginRequest, SignupRequest, UserResponse
 
 router = APIRouter(
@@ -60,6 +60,7 @@ def signup(
     user = User(
         email=email,
         password_hash=hash_password(payload.password),
+        role=UserRole.MEMBER.value,
     )
 
     session.add(user)

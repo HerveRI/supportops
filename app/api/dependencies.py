@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.core.security import decode_access_token
 from app.db.session import get_db_session
-from app.models.user import User
+from app.models.user import User, UserRole
 
 
 def get_current_user(
@@ -47,3 +47,15 @@ def get_current_user(
         )
 
     return user
+
+
+def require_admin(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    if current_user.role != UserRole.ADMIN.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+
+    return current_user

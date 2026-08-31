@@ -3,6 +3,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+from app.models.user import UserRole
+
 
 class SignupRequest(BaseModel):
     email: EmailStr
@@ -17,6 +19,7 @@ class LoginRequest(BaseModel):
 class UserResponse(BaseModel):
     id: UUID
     email: EmailStr
+    role: UserRole
     is_active: bool
     created_at: datetime
     updated_at: datetime

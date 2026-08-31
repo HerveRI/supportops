@@ -1,17 +1,30 @@
 from datetime import datetime
+from enum import StrEnum
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, String, func, true
+from sqlalchemy import Boolean, CheckConstraint, DateTime, String, func, true
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
 
+class UserRole(StrEnum):
+    MEMBER = "member"
+    ADMIN = "admin"
+
+
 class User(Base):
     """Application user account."""
 
     __tablename__ = "users"
+
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('member', 'admin')",
+            name="ck_users_role",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
@@ -22,6 +35,13 @@ class User(Base):
         nullable=False,
         unique=True,
         index=True,
+    )
+
+    role: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=UserRole.MEMBER.value,
+        server_default=UserRole.MEMBER.value,
     )
 
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
