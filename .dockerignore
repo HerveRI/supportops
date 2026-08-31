@@ -12,3 +12,5 @@ __pycache__
 .mypy_cache
 
 .pre-commit-config.yaml
+
+cookies.txt
