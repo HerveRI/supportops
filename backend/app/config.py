@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     auth_cookie_name: str = "supportops_access_token"
     auth_cookie_secure: bool = False
 
+    frontend_origin: str = "http://localhost:5173"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
