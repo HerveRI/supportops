@@ -1,2 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
 
+# Backend environment
+backend/.env
+
+# Backend local/runtime artifacts
+backend/cookies.txt
+backend/storage/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/.env.*.local
+
+# Logs
+*.log
+
+# IDE
 .vscode/

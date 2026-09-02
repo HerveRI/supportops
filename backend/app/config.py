@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,6 +17,9 @@ class Settings(BaseSettings):
     auth_cookie_secure: bool = False
 
     frontend_origin: str = "http://localhost:5173"
+
+    document_storage_dir: Path = Path("storage/documents")
+    max_document_size_bytes: int = 5 * 1024 * 1024
 
     model_config = SettingsConfigDict(
         env_file=".env",
