@@ -5,6 +5,8 @@ import { useAuth } from "../auth/useAuth";
 
 import { uploadDocument } from "../api/document";
 
+import { sendChatMessage } from "../api/chat";
+
 export function HomePage() {
 
   const { user, logout } = useAuth();
@@ -13,6 +15,11 @@ export function HomePage() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState<string | null>(null);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [isSending, setIsSending] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -67,31 +74,90 @@ export function HomePage() {
     }
   }
 
+  async function handleChat(event: SubmitEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const trimmedQuestion = question.trim();
+
+    if (!trimmedQuestion) {
+      setChatError("Enter a question");
+      return;
+    }
+
+    setIsSending(true);
+    setChatError(null);
+    setAnswer(null);
+
+    try{
+      const response = await sendChatMessage(trimmedQuestion);
+      setAnswer(response.answer);
+    } catch (error) {
+      setChatError(
+        error instanceof Error ? error.message : "Chat request failed",
+      );
+    } finally {
+      setIsSending(false);
+    }
+  }
+
   return (
     <main className="home-page">
-      <section className="home-card">
-        <h1>SupportOps</h1>
+      <header className="home-header">
+        <div>
+          <h1>SupportOps</h1>
 
-        <p>
-          Signed in as <strong>{user.email}</strong>
-        </p>
+          <p>
+            Signed in as <strong>{user.email}</strong> . {user.role}
+          </p>
+        </div>
 
-        <p>
-          Role: <strong>{user.role}</strong>
-        </p>
-
-        {error && <p className="error-message">{error}</p>}
+      {error && <p className="error-message">{error}</p>}
 
         <button onClick={handleLogout} disabled={isLoggingOut}>
           {isLoggingOut ? "Logging out..." : "Log out"}
         </button>
+      </header>
+
+      <section className="home-card">
+        <h2>Support assistant</h2>
+        <p>Ask questions about your internal support documents.</p>
+
+        <form onSubmit={handleChat} className="chat-form">
+          <label>
+            Question
+            <textarea
+              value={question}
+              onChange={(event) => {
+                setQuestion(event.currentTarget.value);
+              }}
+              placeholder="Ask about the support documents..."
+              rows={4}
+              disabled={isSending}
+            />
+          </label>
+          <button type="submit" disabled={isSending}>
+            {isSending ? "Thinking..." : "Ask"}
+          </button>
+        </form>
+        
+        {chatError && <p className="error-message">{chatError}</p>}
+
+        {answer && (
+          <div className="chat-answer">
+            <h3>Answer</h3>
+            <p>{answer}</p>
+          </div>
+        )}
+
       </section>
 
-      {user.role === "admin" && (
-        <section>
-          <h2>Upload document</h2>
 
-          <form onSubmit={handleUpload}>
+      {user.role === "admin" && (
+        <section className="home-card">
+          <h2>Upload document</h2>
+          <p>Add a UTF-8 text document to the support knowledge base.</p>
+
+          <form onSubmit={handleUpload} className="upload-form">
             <input
               type="file"
               accept=".txt,text/plain"
@@ -105,8 +171,8 @@ export function HomePage() {
             </button>
           </form>
 
-          {uploadError && <p>{uploadError}</p>}
-          {uploadSuccess && <p>{uploadSuccess}</p>}
+          {uploadError && <p className="error-message">{uploadError}</p>}
+          {uploadSuccess && <p className="error-message">{uploadSuccess}</p>}
         </section>
       )}
     </main>
