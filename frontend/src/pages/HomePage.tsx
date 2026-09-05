@@ -5,7 +5,13 @@ import { useAuth } from "../auth/useAuth";
 
 import { uploadDocument } from "../api/document";
 
-import { sendChatMessage } from "../api/chat";
+import { sendChatMessage, type ChatCitation } from "../api/chat";
+
+interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  citations: ChatCitation[];
+}
 
 export function HomePage() {
 
@@ -17,7 +23,7 @@ export function HomePage() {
   const [isUploading, setIsUploading] = useState(false);
 
   const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatError, setChatError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
 
@@ -84,13 +90,28 @@ export function HomePage() {
       return;
     }
 
-    setIsSending(true);
+    const userMessage: ChatMessage = {
+      role: "user",
+      content: trimmedQuestion,
+      citations: [],
+    }
+
+    setMessages((current) => [...current, userMessage]);
+    setQuestion("");
     setChatError(null);
-    setAnswer(null);
+    setIsSending(true);
+  
 
     try{
       const response = await sendChatMessage(trimmedQuestion);
-      setAnswer(response.answer);
+      
+      const assistantMessage: ChatMessage = {
+        role: "assistant",
+        content: response.answer,
+        citations: response.citations,
+      };
+
+      setMessages((current) => [...current, assistantMessage]);
     } catch (error) {
       setChatError(
         error instanceof Error ? error.message : "Chat request failed",
@@ -122,6 +143,47 @@ export function HomePage() {
         <h2>Support assistant</h2>
         <p>Ask questions about your internal support documents.</p>
 
+        {messages.length > 0 && (
+          <div className="chat-messages">
+            {messages.map((message, index) => (
+              <div
+                key={`${message.role}-${index}`}
+                className={`chat-message ${message.role}`}
+              >
+                <strong>
+                  {message.role === "user" ? "You" : "SupportOps"}
+                </strong>
+
+                <p>{message.content}</p>
+
+                {message.citations.length > 0 && (
+                  <div className="chat-citations">
+                    <strong>Sources</strong>
+
+                    {message.citations.map((citation) => (
+                      <div
+                        key={citation.chunk_id}
+                        className="citation"
+                      >
+                        <p>
+                          <strong>[{citation.citation_number}]</strong>{" "}
+                          {citation.original_filename} · chunk{" "}
+                          {citation.chunk_index}
+                        </p>
+
+                        <details>
+                          <summary>View source passage</summary>
+                          <p>{citation.text}</p>
+                        </details>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
         <form onSubmit={handleChat} className="chat-form">
           <label>
             Question
@@ -135,19 +197,13 @@ export function HomePage() {
               disabled={isSending}
             />
           </label>
+          
           <button type="submit" disabled={isSending}>
             {isSending ? "Thinking..." : "Ask"}
           </button>
         </form>
         
         {chatError && <p className="error-message">{chatError}</p>}
-
-        {answer && (
-          <div className="chat-answer">
-            <h3>Answer</h3>
-            <p>{answer}</p>
-          </div>
-        )}
 
       </section>
 
@@ -172,7 +228,7 @@ export function HomePage() {
           </form>
 
           {uploadError && <p className="error-message">{uploadError}</p>}
-          {uploadSuccess && <p className="error-message">{uploadSuccess}</p>}
+          {uploadSuccess && <p className="success-message">{uploadSuccess}</p>}
         </section>
       )}
     </main>

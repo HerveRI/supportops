@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,6 +11,22 @@ from app.services.retrieval import (
     SimilaritySearchResult,
     search_knowledge_base,
 )
+
+CITATION_PATTERN = re.compile(r"\[(\d+)\]")
+
+
+@dataclass(frozen=True)
+class AgentCitation:
+    citation_number: int
+    source: SimilaritySearchResult
+
+
+@dataclass(frozen=True)
+class AgentResult:
+    answer: str
+    citations: list[AgentCitation]
+    used_retrieval: bool
+
 
 SEARCH_TOOL = {
     "type": "function",
@@ -45,33 +62,74 @@ Do not claim internal facts that are not supported by the tool results.
 If the documents do not support an answer, say that you do not know based
 on the available documents.
 
+When you use information from search results, cite the supporting source
+using its supplied citation label, such as [1] or [2].
+
+Use citation labels exactly as supplied.
+Do not invent citation numbers.
+When multiple sources support a claim, cite them separately, such as [1] [2].
+
 Simple greetings do not require a tool call.
 """.strip()
 
 
-@dataclass(frozen=True)
-class AgentResult:
-    answer: str
-    sources: list[SimilaritySearchResult]
-    used_retrieval: bool
-
-
 def _serialize_search_results(
     results: list[SimilaritySearchResult],
+    sources: list[SimilaritySearchResult],
+    source_numbers: dict[str, int],
 ) -> str:
-    """Convert retrieved chunks into tool-result content for the model."""
+    """Convert retrieved chunks into numbered tool-result content"""
 
-    data = [
+    data = []
+
+    for result in results:
+        chunk_key = str(result.chunk_id)
+
+        if chunk_key not in source_numbers:
+            sources.append(result)
+            source_numbers[chunk_key] = len(sources)
+
+        citation_number = source_numbers[chunk_key]
+    data.append(
         {
+            "citation": f"[{citation_number}]",
             "filename": result.original_filename,
             "chunk_index": result.chunk_index,
             "text": result.text,
             "cosine_similarity": result.cosine_similarity,
         }
-        for result in results
-    ]
+    )
 
     return json.dumps(data, ensure_ascii=False)
+
+
+def _extract_citations(
+    answer: str,
+    sources: list[SimilaritySearchResult],
+) -> list[AgentCitation]:
+    """Return valid sources actually cited by the model."""
+
+    citations = []
+    seen_numbers = set()
+
+    for match in CITATION_PATTERN.finditer(answer):
+        citation_number = int(match.group(1))
+
+        if citation_number < 1 or citation_number > len(sources):
+            raise LLMError("Ollama returned an invalid citation")
+
+        if citation_number in seen_numbers:
+            continue
+        seen_numbers.add(citation_number)
+
+        citations.append(
+            AgentCitation(
+                citation_number=citation_number,
+                source=sources[citation_number - 1],
+            )
+        )
+
+    return citations
 
 
 def answer_with_agent(
@@ -103,8 +161,6 @@ def answer_with_agent(
         think=True,
     )
 
-    # print(f"---------- {first_message} -----------")
-
     tool_calls = first_message.get("tool_calls")
 
     if not tool_calls:
@@ -114,7 +170,7 @@ def answer_with_agent(
 
         return AgentResult(
             answer=content.strip(),
-            sources=[],
+            citations=[],
             used_retrieval=False,
         )
     if not isinstance(tool_calls, list):
@@ -123,6 +179,7 @@ def answer_with_agent(
     messages.append(first_message)
 
     sources: list[SimilaritySearchResult] = []
+    source_numbers: dict[str, int] = {}
 
     for tool_call in tool_calls:
         function = tool_call.get("function", {})
@@ -142,30 +199,37 @@ def answer_with_agent(
             top_k=top_k,
         )
 
-        sources.extend(results)
+        tool_content = _serialize_search_results(
+            results=results, sources=sources, source_numbers=source_numbers
+        )
 
         messages.append(
             {
                 "role": "tool",
                 "tool_name": "search_knowledge_base",
-                "content": _serialize_search_results(results),
+                "content": tool_content,
             }
         )
 
         final_message = chat_with_ollama(
             messages=messages,
-            tools=[SEARCH_TOOL],
             think=True,
         )
 
         content = final_message.get("content")
-        # print(content)
 
         if not isinstance(content, str) or not content.strip():
             raise LLMError("Ollama returned an empty final response")
 
-        return AgentResult(
-            answer=content.strip(),
+        answer = content.strip()
+
+        citations = _extract_citations(
+            answer=answer,
             sources=sources,
+        )
+
+        return AgentResult(
+            answer=answer,
+            citations=citations,
             used_retrieval=True,
         )

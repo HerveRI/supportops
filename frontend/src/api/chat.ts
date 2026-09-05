@@ -1,5 +1,16 @@
+export interface ChatCitation {
+    citation_number: number;
+    chunk_id: string;
+    document_id: string;
+    original_filename: string;
+    chunk_index: number;
+    text: string;
+    page_number: number | null;
+}
+
 export interface ChatResponse {
     answer: string;
+    citations: ChatCitation[];
 }
 
 export async function sendChatMessage(
