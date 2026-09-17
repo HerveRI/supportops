@@ -1,3 +1,5 @@
+import json
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
@@ -49,6 +51,57 @@ def chat_with_ollama(
         raise LLMError("Ollama returned an invalid message") from exc
 
     return message
+
+
+def stream_chat_with_ollama(
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None = None,
+    think: bool = False,
+) -> Iterator[dict[str, Any]]:
+    """Stream assistant message chunks from ollama."""
+
+    url = f"{settings.ollama_base_url.rstrip('/')}/api/chat"
+
+    payload: dict[str, Any] = {
+        "model": settings.ollama_model,
+        "messages": messages,
+        "think": think,
+        "stream": False,
+        "option": {
+            "num_ctx": 8192,
+            "temperature": 0.7,
+        },
+    }
+
+    if tools is not None:
+        payload["tools"] = tools
+
+    try:
+        with httpx.stream(
+            "POST",
+            url,
+            json=payload,
+            timeout=120.0,
+        ) as response:
+            response.raise_for_status()
+
+            for line in response.iter_lines():
+                if not line:
+                    continue
+
+                try:
+                    data = json.loads(line)
+                    message = data["message"]
+                except (json.JSONDecodeError, KeyError, TypeError) as exc:
+                    raise LLMError(
+                        "Ollama returned an invalid streamed message"
+                    ) from exc
+                if not isinstance(message, dict):
+                    raise LLMError("Ollama returned an invalid streamed message")
+
+                yield message
+    except httpx.HTTPError as exc:
+        raise LLMError("Ollama returned an invalid streamed message") from exc
 
 
 def generate_chat_response(

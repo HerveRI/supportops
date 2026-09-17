@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -8,7 +9,7 @@ from app.api.dependencies import get_current_user
 from app.api.routes import chat as chat_route
 from app.db.session import get_db_session
 from app.main import app
-from app.services.agent import AgentCitation, AgentResult
+from app.services.agent import AgentCitation, AgentResult, AgentStreamEvent
 from app.services.retrieval import SimilaritySearchResult
 
 
@@ -110,6 +111,108 @@ def test_chat_rejects_whitespace_question(
     response = client.post(
         "/chat",
         json={"question": "   "},
+    )
+
+    assert response.status_code == 422
+
+
+def test_chat_stream_returns_content_and_citations(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = SimilaritySearchResult(
+        chunk_id=uuid4(),
+        document_id=uuid4(),
+        original_filename="support-guide.txt",
+        chunk_index=3,
+        text="Reset the device before reconnecting it.",
+        start_char=100,
+        end_char=142,
+        page_number=None,
+        cosine_similarity=0.91,
+    )
+
+    citation = AgentCitation(
+        citation_number=1,
+        source=source,
+    )
+
+    def fake_stream_answer_with_agent(**kwards):
+        yield AgentStreamEvent(
+            type="content",
+            content="Reset the device ",
+        )
+        yield AgentStreamEvent(
+            type="content",
+            content="before reconnecting it. [1]",
+        )
+        yield AgentStreamEvent(
+            type="citations",
+            citations=[citation],
+        )
+        yield AgentStreamEvent(
+            type="done",
+            used_retrieval=True,
+        )
+
+    monkeypatch.setattr(
+        chat_route,
+        "stream_answer_with_agent",
+        fake_stream_answer_with_agent,
+    )
+
+    app.dependency_overrides[get_db_session] = override_db_session
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    response = client.post(
+        "/chat/stream",
+        json={"question": "How do I reset the device?"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/x-ndjson")
+
+    events = [json.loads(line) for line in response.text.splitlines()]
+
+    assert events == [
+        {
+            "type": "content",
+            "content": "Reset the device ",
+        },
+        {
+            "type": "content",
+            "content": "before reconnecting it. [1]",
+        },
+        {
+            "type": "citations",
+            "citations": [
+                {
+                    "citation_number": 1,
+                    "chunk_id": str(source.chunk_id),
+                    "document_id": str(source.document_id),
+                    "original_filename": "support-guide.txt",
+                    "chunk_index": 3,
+                    "text": "Reset the device before reconnecting it.",
+                    "page_number": None,
+                }
+            ],
+        },
+        {
+            "type": "done",
+            "used_retrieval": True,
+        },
+    ]
+
+
+def test_chat_stream_rejects_whitespace_question(
+    client: TestClient,
+) -> None:
+    app.dependency_overrides[get_db_session] = override_db_session
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    response = client.post(
+        "/chat/stream",
+        json={"question": " "},
     )
 
     assert response.status_code == 422

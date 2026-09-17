@@ -5,7 +5,7 @@ import { useAuth } from "../auth/useAuth";
 
 import { uploadDocument } from "../api/document";
 
-import { sendChatMessage, type ChatCitation } from "../api/chat";
+import { streamChatMessage, type ChatCitation } from "../api/chat";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -14,7 +14,6 @@ interface ChatMessage {
 }
 
 export function HomePage() {
-
   const { user, logout } = useAuth();
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -72,11 +71,11 @@ export function HomePage() {
       setSelectedFile(null);
       form.reset();
     } catch (error) {
-        setUploadError(
-          error instanceof Error ? error.message : "Document upload failed",
-        );
+      setUploadError(
+        error instanceof Error ? error.message : "Document upload failed",
+      );
     } finally {
-        setIsUploading(false);
+      setIsUploading(false);
     }
   }
 
@@ -94,25 +93,79 @@ export function HomePage() {
       role: "user",
       content: trimmedQuestion,
       citations: [],
-    }
+    };
 
-    setMessages((current) => [...current, userMessage]);
+    const assistantMessage: ChatMessage = {
+      role: "assistant",
+      content: "",
+      citations: [],
+    };
+
+    setMessages((current) => [
+      ...current,
+      userMessage,
+      assistantMessage,
+    ]);
     setQuestion("");
     setChatError(null);
     setIsSending(true);
-  
 
-    try{
-      const response = await sendChatMessage(trimmedQuestion);
-      
-      const assistantMessage: ChatMessage = {
-        role: "assistant",
-        content: response.answer,
-        citations: response.citations,
-      };
+    try {
+      await streamChatMessage(trimmedQuestion, {
+        onContent: (content) => {
+          setMessages((current) => {
+            const lastIndex = current.length - 1;
+            const lastMessage = current[lastIndex];
 
-      setMessages((current) => [...current, assistantMessage]);
+            if (lastMessage?.role !== "assistant") {
+              return current;
+            }
+
+            return current.map((message, index) =>
+              index === lastIndex
+                ? {
+                    ...message,
+                    content: message.content + content,
+                  }
+                : message,
+            );
+          });
+        },
+        onCitations: (citations) => {
+          setMessages((current) => {
+            const lastIndex = current.length - 1;
+            const lastMessage = current[lastIndex];
+
+            if (lastMessage?.role !== "assistant") {
+              return current;
+            }
+
+            return current.map((message, index) =>
+              index === lastIndex
+                ? {
+                    ...message,
+                    citations,
+                  }
+                : message,
+            );
+          });
+        },
+      });
     } catch (error) {
+      setMessages((current) => {
+        const lastMessage = current[current.length - 1];
+
+        if (
+          lastMessage?.role === "assistant" &&
+          !lastMessage.content &&
+          lastMessage.citations.length === 0
+        ) {
+          return current.slice(0, -1);
+        }
+
+        return current;
+      });
+
       setChatError(
         error instanceof Error ? error.message : "Chat request failed",
       );
@@ -132,7 +185,7 @@ export function HomePage() {
           </p>
         </div>
 
-      {error && <p className="error-message">{error}</p>}
+        {error && <p className="error-message">{error}</p>}
 
         <button onClick={handleLogout} disabled={isLoggingOut}>
           {isLoggingOut ? "Logging out..." : "Log out"}
@@ -197,16 +250,14 @@ export function HomePage() {
               disabled={isSending}
             />
           </label>
-          
+
           <button type="submit" disabled={isSending}>
             {isSending ? "Thinking..." : "Ask"}
           </button>
         </form>
-        
+
         {chatError && <p className="error-message">{chatError}</p>}
-
       </section>
-
 
       {user.role === "admin" && (
         <section className="home-card">

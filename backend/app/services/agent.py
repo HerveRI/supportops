@@ -1,11 +1,12 @@
 import json
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
-from app.services.llm import LLMError, chat_with_ollama
+from app.services.llm import LLMError, chat_with_ollama, stream_chat_with_ollama
 from app.services.retrieval import (
     DEFAULT_TOP_K,
     SimilaritySearchResult,
@@ -26,6 +27,14 @@ class AgentResult:
     answer: str
     citations: list[AgentCitation]
     used_retrieval: bool
+
+
+@dataclass(frozen=True)
+class AgentStreamEvent:
+    type: Literal["content", "citations", "done"]
+    content: str | None = None
+    citations: list[AgentCitation] | None = None
+    used_retrieval: bool | None = None
 
 
 SEARCH_TOOL = {
@@ -90,15 +99,15 @@ def _serialize_search_results(
             source_numbers[chunk_key] = len(sources)
 
         citation_number = source_numbers[chunk_key]
-    data.append(
-        {
-            "citation": f"[{citation_number}]",
-            "filename": result.original_filename,
-            "chunk_index": result.chunk_index,
-            "text": result.text,
-            "cosine_similarity": result.cosine_similarity,
-        }
-    )
+        data.append(
+            {
+                "citation": f"[{citation_number}]",
+                "filename": result.original_filename,
+                "chunk_index": result.chunk_index,
+                "text": result.text,
+                "cosine_similarity": result.cosine_similarity,
+            }
+        )
 
     return json.dumps(data, ensure_ascii=False)
 
@@ -211,25 +220,149 @@ def answer_with_agent(
             }
         )
 
-        final_message = chat_with_ollama(
-            messages=messages,
-            think=True,
-        )
+    final_message = chat_with_ollama(
+        messages=messages,
+        think=True,
+    )
 
-        content = final_message.get("content")
+    content = final_message.get("content")
 
+    if not isinstance(content, str) or not content.strip():
+        raise LLMError("Ollama returned an empty final response")
+
+    answer = content.strip()
+
+    citations = _extract_citations(
+        answer=answer,
+        sources=sources,
+    )
+
+    return AgentResult(
+        answer=answer,
+        citations=citations,
+        used_retrieval=True,
+    )
+
+
+def stream_answer_with_agent(
+    db: Session,
+    question: str,
+    top_k: int = DEFAULT_TOP_K,
+) -> Iterator[AgentStreamEvent]:
+    """Stream an answer while allowing the model to request retrieval."""
+
+    question = question.strip()
+
+    if not question:
+        raise ValueError("Question cannot be empty")
+
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT,
+        },
+        {
+            "role": "user",
+            "content": question,
+        },
+    ]
+
+    first_message = chat_with_ollama(
+        messages=messages,
+        tools=[SEARCH_TOOL],
+        think=True,
+    )
+
+    tool_calls = first_message.get("tool_calls")
+
+    if not tool_calls:
+        content = first_message.get("content")
         if not isinstance(content, str) or not content.strip():
-            raise LLMError("Ollama returned an empty final response")
+            raise LLMError("Ollama returned an empty response")
 
-        answer = content.strip()
+        yield AgentStreamEvent(type="content", content=content.strip())
+        yield AgentStreamEvent(
+            type="done",
+            used_retrieval=False,
+        )
+        return
 
-        citations = _extract_citations(
-            answer=answer,
+    if not isinstance(tool_calls, list):
+        raise LLMError("Ollama returned invalid tool calls")
+
+    messages.append(first_message)
+
+    sources: list[SimilaritySearchResult] = []
+    source_numbers: dict[str, int] = {}
+
+    for tool_call in tool_calls:
+        function = tool_call.get("function", {})
+
+        if function.get("name") != "search_knowledge_base":
+            raise LLMError("Ollama requested an unknown tool")
+
+        arguments = function.get("arguments", {})
+        query = arguments.get("query")
+
+        if not isinstance(query, str) or not query.strip():
+            raise LLMError("Ollama supplied an invalid search query")
+
+        results = search_knowledge_base(
+            db=db,
+            query=query,
+            top_k=top_k,
+        )
+
+        tool_content = _serialize_search_results(
+            results=results,
             sources=sources,
+            source_numbers=source_numbers,
         )
 
-        return AgentResult(
-            answer=answer,
-            citations=citations,
-            used_retrieval=True,
+        messages.append(
+            {
+                "role": "tool",
+                "tool_name": "search_knowledge_base",
+                "content": tool_content,
+            }
         )
+
+    answer_parts: list[str] = []
+
+    for message in stream_chat_with_ollama(
+        messages=messages,
+        think=True,
+    ):
+        content = message.get("content")
+
+        if content is None or content == "":
+            continue
+
+        if not isinstance(content, str):
+            raise LLMError("Ollama returned invalid streamed content")
+
+        answer_parts.append(content)
+
+        yield AgentStreamEvent(
+            type="content",
+            content=content,
+        )
+
+    answer = "".join(answer_parts).strip()
+
+    if not answer:
+        raise LLMError("Ollama returned an empty final response")
+
+    citations = _extract_citations(
+        answer=answer,
+        sources=sources,
+    )
+
+    yield AgentStreamEvent(
+        type="citations",
+        citations=citations,
+    )
+    yield AgentStreamEvent(
+        type="done",
+        used_retrieval=True,
+    )
