@@ -102,7 +102,7 @@ def _serialize_search_results(
         data.append(
             {
                 "citation": f"[{citation_number}]",
-                "filename": result.original_filename,
+                "filename": result.source_name,
                 "chunk_index": result.chunk_index,
                 "text": result.text,
                 "cosine_similarity": result.cosine_similarity,

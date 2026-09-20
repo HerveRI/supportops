@@ -35,7 +35,7 @@ def _build_context(results: list[SimilaritySearchResult]) -> str:
     for result_number, result in enumerate(results, start=1):
         context_parts.append(
             f"""Source {result_number}
-Filename: {result.original_filename}
+Filename: {result.source_name}
 Chunk: {result.chunk_index}
 
 {result.text}"""

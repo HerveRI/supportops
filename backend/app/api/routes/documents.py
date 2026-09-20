@@ -11,11 +11,19 @@ from app.db.session import get_db_session
 from app.models.document import Document
 from app.models.user import User
 from app.schemas.document import DocumentResponse
+from app.services.chunking import chunk_extractions, store_document_chunks
+from app.services.embeddings import embed_document_chunks
+from app.services.text_extraction import TextExtractionError, extract_document_texts
 
 router = APIRouter(
     prefix="/admin/documents",
     tags=["documents"],
 )
+
+SUPPORTED_DOCUMENT_TYPES = {
+    ".txt": "text/plain",
+    ".json": "application/json",
+}
 
 
 @router.post(
@@ -28,7 +36,6 @@ def upload_document(
     db_session: Annotated[Session, Depends(get_db_session)],
     admin_user: Annotated[User, Depends(require_admin)],
 ) -> Document:
-
     original_filename = Path(file.filename or "").name
 
     if not original_filename:
@@ -43,10 +50,13 @@ def upload_document(
             detail="Filename is too long",
         )
 
-    if Path(original_filename).suffix.lower() != ".txt":
+    suffix = Path(original_filename).suffix.lower()
+    content_type = SUPPORTED_DOCUMENT_TYPES.get(suffix)
+
+    if content_type is None:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Only .txt files are supported",
+            detail="Only .txt and .json files are supported",
         )
 
     contents = file.file.read(settings.max_document_size_bytes + 1)
@@ -68,11 +78,11 @@ def upload_document(
     except UnicodeDecodeError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Uploaded .txt file must contain valid UTF-8 text",
+            detail="Uploaded file must contain valid UTF-8 text",
         ) from exc
 
     document_id = uuid4()
-    storage_key = f"{document_id}.txt"
+    storage_key = f"{document_id}{suffix}"
 
     storage_directory = settings.document_storage_dir
     storage_directory.mkdir(parents=True, exist_ok=True)
@@ -85,15 +95,43 @@ def upload_document(
         document = Document(
             id=document_id,
             original_filename=original_filename,
-            content_type="text/plain",
+            content_type=content_type,
             file_size_bytes=len(contents),
             storage_key=storage_key,
             uploaded_by_user_id=admin_user.id,
         )
 
         db_session.add(document)
+        db_session.flush()
+
+        extractions = extract_document_texts(
+            document=document,
+            storage_root=storage_directory,
+        )
+        chunks = chunk_extractions(extractions)
+        store_document_chunks(
+            db=db_session,
+            document_id=document.id,
+            chunks=chunks,
+        )
+        embed_document_chunks(
+            db=db_session,
+            document_id=document.id,
+        )
+
         db_session.commit()
         db_session.refresh(document)
+
+    except TextExtractionError as exc:
+        db_session.rollback()
+
+        if storage_path.exists():
+            storage_path.unlink()
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
     except Exception:
         db_session.rollback()

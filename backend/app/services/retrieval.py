@@ -22,6 +22,12 @@ class SimilaritySearchResult:
     end_char: int
     page_number: int | None
     cosine_similarity: float
+    source_title: str | None = None
+
+    @property
+    def source_name(self) -> str:
+        """Return the logical source title, falling back to the uploaded filename."""
+        return self.source_title or self.original_filename
 
 
 def search_knowledge_base(
@@ -76,6 +82,7 @@ def search_knowledge_base(
             end_char=chunk.end_char,
             page_number=chunk.page_number,
             cosine_similarity=1.0 - float(distance),
+            source_title=chunk.source_title,
         )
         for chunk, original_filename, distance in rows
     ]

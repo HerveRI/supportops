@@ -22,7 +22,7 @@ class FakeSession:
         return FakeExecutionResult(self.rows)
 
 
-def test_search_knowledge_base_maps_database_result(
+def test_search_knowledge_base_uses_movie_title_as_source_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     chunk_id = uuid4()
@@ -32,17 +32,18 @@ def test_search_knowledge_base_maps_database_result(
         id=chunk_id,
         document_id=document_id,
         chunk_index=2,
-        text="Reset the device before reconnecting it.",
+        text="A computer hacker discovers the nature of his reality.",
         start_char=100,
-        end_char=142,
+        end_char=154,
         page_number=None,
+        source_title="The Matrix",
     )
 
     session = FakeSession(
         rows=[
             (
                 chunk,
-                "support-guide.txt",
+                "movies.json",
                 0.2,
             )
         ]
@@ -56,7 +57,7 @@ def test_search_knowledge_base_maps_database_result(
 
     results = retrieval.search_knowledge_base(
         db=session,  # type: ignore[arg-type]
-        query="How do I reset the device?",
+        query="computer hacker reality",
         top_k=5,
     )
 
@@ -66,9 +67,50 @@ def test_search_knowledge_base_maps_database_result(
 
     assert result.chunk_id == chunk_id
     assert result.document_id == document_id
-    assert result.original_filename == "support-guide.txt"
+    assert result.original_filename == "movies.json"
+    assert result.source_title == "The Matrix"
+    assert result.source_name == "The Matrix"
     assert result.chunk_index == 2
     assert result.cosine_similarity == pytest.approx(0.8)
+
+
+def test_search_knowledge_base_falls_back_to_filename(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chunk = SimpleNamespace(
+        id=uuid4(),
+        document_id=uuid4(),
+        chunk_index=0,
+        text="Reset the device before reconnecting it.",
+        start_char=0,
+        end_char=40,
+        page_number=None,
+        source_title=None,
+    )
+
+    session = FakeSession(
+        rows=[
+            (
+                chunk,
+                "support-guide.txt",
+                0.1,
+            )
+        ]
+    )
+
+    monkeypatch.setattr(
+        retrieval,
+        "embed_texts",
+        lambda texts: [[0.0] * 384],
+    )
+
+    results = retrieval.search_knowledge_base(
+        db=session,  # type: ignore[arg-type]
+        query="reset procedure",
+    )
+
+    assert results[0].source_title is None
+    assert results[0].source_name == "support-guide.txt"
 
 
 def test_search_knowledge_base_rejects_empty_query() -> None:

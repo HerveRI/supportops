@@ -20,14 +20,16 @@ class TextChunk:
     start_char: int
     end_char: int
     page_number: int | None
+    source_title: str | None = None
 
 
 def chunk_extracted_text(
     extraction: TextExtractionResult,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+    starting_chunk_index: int = 0,
 ) -> list[TextChunk]:
-    """split extracted text into ordered overlapping chunks."""
+    """Split extracted text into ordered overlapping chunks."""
     if chunk_size <= 0:
         raise ValueError("chunk_size must be greater than zero")
 
@@ -37,6 +39,9 @@ def chunk_extracted_text(
     if chunk_overlap >= chunk_size:
         raise ValueError("chunk_overlap must be smaller than chunk_size")
 
+    if starting_chunk_index < 0:
+        raise ValueError("starting_chunk_index cannot be negative")
+
     text = extraction.text
 
     if not text:
@@ -45,7 +50,7 @@ def chunk_extracted_text(
     step_size = chunk_size - chunk_overlap
     chunks: list[TextChunk] = []
 
-    chunk_index = 0
+    chunk_index = starting_chunk_index
     start_char = 0
 
     while start_char < len(text):
@@ -60,6 +65,7 @@ def chunk_extracted_text(
                 start_char=start_char,
                 end_char=end_char,
                 page_number=extraction.page_number,
+                source_title=extraction.source_title,
             )
         )
 
@@ -68,6 +74,31 @@ def chunk_extracted_text(
 
         start_char += step_size
         chunk_index += 1
+
+    return chunks
+
+
+def chunk_extractions(
+    extractions: list[TextExtractionResult],
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+) -> list[TextChunk]:
+    """Chunk multiple extracted records while keeping document chunk indexes unique."""
+    chunks: list[TextChunk] = []
+    next_chunk_index = 0
+
+    for extraction in extractions:
+        extraction_chunks = chunk_extracted_text(
+            extraction=extraction,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            starting_chunk_index=next_chunk_index,
+        )
+
+        chunks.extend(extraction_chunks)
+
+        if extraction_chunks:
+            next_chunk_index = extraction_chunks[-1].chunk_index + 1
 
     return chunks
 
@@ -86,6 +117,7 @@ def store_document_chunks(
             start_char=chunk.start_char,
             end_char=chunk.end_char,
             page_number=chunk.page_number,
+            source_title=chunk.source_title,
         )
         for chunk in chunks
     ]

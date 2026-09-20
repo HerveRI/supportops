@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     frontend_origin: str = "http://localhost:5173"
 
     document_storage_dir: Path = Path("storage/documents")
-    max_document_size_bytes: int = 5 * 1024 * 1024
+    max_document_size_bytes: int = 30 * 1024 * 1024
 
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen3.5:9b"
