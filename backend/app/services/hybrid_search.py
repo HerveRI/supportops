@@ -7,9 +7,9 @@ from sqlalchemy.orm import Session
 from app.services.keyword_search import KeywordSearchResult, keyword_search
 from app.services.retrieval import SimilaritySearchResult, search_knowledge_base
 
-DEFAULT_TOP_K = 5
+DEFAULT_TOP_K = 3
 DEFAULT_RRF_K = 60
-DEFAULT_CANDIDATE_MULTIPLIER = 5
+DEFAULT_CANDIDATE_MULTIPLIER = 3
 
 SearchResult = KeywordSearchResult | SimilaritySearchResult
 

@@ -66,7 +66,7 @@ def stream_chat_with_ollama(
         "model": settings.ollama_model,
         "messages": messages,
         "think": think,
-        "stream": False,
+        "stream": True,
         "option": {
             "num_ctx": 8192,
             "temperature": 0.7,

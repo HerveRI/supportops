@@ -1,6 +1,7 @@
 import math
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
+from threading import Lock
 from uuid import UUID
 
 from sqlalchemy import select
@@ -34,6 +35,34 @@ class KeywordSearchResult:
         return self.source_title or self.original_filename
 
 
+@dataclass(frozen=True)
+class _IndexedChunk:
+    chunk_id: UUID
+    document_id: UUID
+    original_filename: str
+    chunk_index: int
+    text: str
+    start_char: int
+    end_char: int
+    page_number: int | None
+    source_title: str | None
+
+
+@dataclass(frozen=True)
+class _BM25Index:
+    chunks: dict[UUID, _IndexedChunk]
+    postings: dict[str, frozenset[UUID]]
+    term_frequencies: dict[UUID, Counter[str]]
+    document_lengths: dict[UUID, int]
+    document_frequencies: Counter[str]
+    average_document_length: float
+    total_chunks: int
+
+
+_index_lock = Lock()
+_cached_index: _BM25Index | None = None
+
+
 def _bm25_idf(total_chunks: int, document_frequency: int) -> float:
     return math.log(
         (total_chunks - document_frequency + 0.5) / (document_frequency + 0.5) + 1
@@ -58,6 +87,109 @@ def _bm25_term_score(
     return (term_frequency * (k1 + 1)) / (term_frequency + k1 * length_normalization)
 
 
+def _build_keyword_index(db: Session) -> _BM25Index:
+    statement = (
+        select(
+            DocumentChunk,
+            Document.original_filename,
+        )
+        .join(
+            Document,
+            Document.id == DocumentChunk.document_id,
+        )
+        .order_by(
+            DocumentChunk.document_id,
+            DocumentChunk.chunk_index,
+        )
+    )
+
+    rows = db.execute(statement).all()
+
+    chunks: dict[UUID, _IndexedChunk] = {}
+    postings: defaultdict[str, set[UUID]] = defaultdict(set)
+    term_frequencies: dict[UUID, Counter[str]] = {}
+    document_lengths: dict[UUID, int] = {}
+    document_frequencies: Counter[str] = Counter()
+
+    total_document_length = 0
+
+    for chunk, original_filename in rows:
+        searchable_text = f"{chunk.source_title or ''} {chunk.text}"
+        tokens = tokenize_keyword_text(searchable_text)
+        frequencies = Counter(tokens)
+
+        chunks[chunk.id] = _IndexedChunk(
+            chunk_id=chunk.id,
+            document_id=chunk.document_id,
+            original_filename=original_filename,
+            chunk_index=chunk.chunk_index,
+            text=chunk.text,
+            start_char=chunk.start_char,
+            end_char=chunk.end_char,
+            page_number=chunk.page_number,
+            source_title=chunk.source_title,
+        )
+        term_frequencies[chunk.id] = frequencies
+        document_lengths[chunk.id] = len(tokens)
+        total_document_length += len(tokens)
+
+        for term in frequencies:
+            postings[term].add(chunk.id)
+            document_frequencies[term] += 1
+
+    total_chunks = len(chunks)
+    average_document_length = (
+        total_document_length / total_chunks if total_chunks else 0.0
+    )
+
+    return _BM25Index(
+        chunks=chunks,
+        postings={term: frozenset(ids) for term, ids in postings.items()},
+        term_frequencies=term_frequencies,
+        document_lengths=document_lengths,
+        document_frequencies=document_frequencies,
+        average_document_length=average_document_length,
+        total_chunks=total_chunks,
+    )
+
+
+def rebuild_keyword_index(db: Session) -> None:
+    """Build and publish the BM25 corpus index from the current database state."""
+    global _cached_index
+
+    new_index = _build_keyword_index(db)
+
+    with _index_lock:
+        _cached_index = new_index
+
+
+def invalidate_keyword_index() -> None:
+    """Discard the cached BM25 index so the next search rebuilds it."""
+    global _cached_index
+
+    with _index_lock:
+        _cached_index = None
+
+
+def _get_keyword_index(db: Session) -> _BM25Index:
+    """Return the cached index, rebuilding only as a restart/failure fallback."""
+    global _cached_index
+
+    with _index_lock:
+        cached_index = _cached_index
+
+    if cached_index is not None:
+        return cached_index
+
+    new_index = _build_keyword_index(db)
+
+    with _index_lock:
+        if _cached_index is None:
+            _cached_index = new_index
+
+        return _cached_index
+
+
 def keyword_search(
     db: Session,
     query: str,
@@ -65,7 +197,7 @@ def keyword_search(
     k1: float = DEFAULT_BM25_K1,
     b: float = DEFAULT_BM25_B,
 ) -> list[KeywordSearchResult]:
-    """Rank stored chunks with BM25 over normalized lexical terms."""
+    """Rank matching stored chunks with BM25 over normalized lexical terms."""
     query = query.strip()
 
     if not query:
@@ -85,49 +217,21 @@ def keyword_search(
     if not query_terms:
         return []
 
-    statement = (
-        select(
-            DocumentChunk,
-            Document.original_filename,
-        )
-        .join(
-            Document,
-            Document.id == DocumentChunk.document_id,
-        )
-        .order_by(
-            DocumentChunk.document_id,
-            DocumentChunk.chunk_index,
-        )
-    )
+    index = _get_keyword_index(db)
 
-    rows = db.execute(statement).all()
-
-    if not rows:
+    if index.total_chunks == 0:
         return []
 
-    chunk_terms: list[list[str]] = []
-    term_frequencies: list[Counter[str]] = []
-    document_frequencies: Counter[str] = Counter()
+    candidate_chunk_ids: set[UUID] = set()
 
-    for chunk, _ in rows:
-        searchable_text = f"{chunk.source_title or ''} {chunk.text}"
-        tokens = tokenize_keyword_text(searchable_text)
-        chunk_terms.append(tokens)
+    for term in query_terms:
+        candidate_chunk_ids.update(index.postings.get(term, ()))
 
-        frequencies = Counter(tokens)
-        term_frequencies.append(frequencies)
+    scored_chunks: list[tuple[float, _IndexedChunk]] = []
 
-        for term in set(tokens):
-            document_frequencies[term] += 1
-
-    total_chunks = len(rows)
-    average_document_length = sum(len(tokens) for tokens in chunk_terms) / total_chunks
-
-    scored_rows: list[tuple[float, object, str]] = []
-
-    for index, (chunk, original_filename) in enumerate(rows):
-        frequencies = term_frequencies[index]
-        document_length = len(chunk_terms[index])
+    for chunk_id in candidate_chunk_ids:
+        frequencies = index.term_frequencies[chunk_id]
+        document_length = index.document_lengths[chunk_id]
         score = 0.0
 
         for term in query_terms:
@@ -137,22 +241,22 @@ def keyword_search(
                 continue
 
             idf = _bm25_idf(
-                total_chunks=total_chunks,
-                document_frequency=document_frequencies[term],
+                total_chunks=index.total_chunks,
+                document_frequency=index.document_frequencies[term],
             )
             term_score = _bm25_term_score(
                 term_frequency=term_frequency,
                 document_length=document_length,
-                average_document_length=average_document_length,
+                average_document_length=index.average_document_length,
                 k1=k1,
                 b=b,
             )
             score += idf * term_score
 
         if score > 0:
-            scored_rows.append((score, chunk, original_filename))
+            scored_chunks.append((score, index.chunks[chunk_id]))
 
-    scored_rows.sort(
+    scored_chunks.sort(
         key=lambda item: (
             -item[0],
             str(item[1].document_id),
@@ -162,9 +266,9 @@ def keyword_search(
 
     return [
         KeywordSearchResult(
-            chunk_id=chunk.id,
+            chunk_id=chunk.chunk_id,
             document_id=chunk.document_id,
-            original_filename=original_filename,
+            original_filename=chunk.original_filename,
             chunk_index=chunk.chunk_index,
             text=chunk.text,
             start_char=chunk.start_char,
@@ -173,5 +277,5 @@ def keyword_search(
             bm25_score=score,
             source_title=chunk.source_title,
         )
-        for score, chunk, original_filename in scored_rows[:top_k]
+        for score, chunk in scored_chunks[:top_k]
     ]

@@ -222,11 +222,8 @@ export function HomePage() {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <h2 className="text-lg font-semibold tracking-tight text-slate-900">
-                    Support assistant
+                    Chat
                   </h2>
-                  <p className="mt-1 text-sm leading-6 text-slate-500">
-                    Ask questions grounded in your internal support documents.
-                  </p>
                 </div>
 
                 <span className="hidden rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-100 sm:inline-flex">
@@ -247,7 +244,7 @@ export function HomePage() {
                         ?
                       </div>
                       <h3 className="text-base font-semibold text-slate-900">
-                        Ask about your support knowledge base
+                        Ask any question about the internal documents
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-500">
                         SupportOps can retrieve relevant document passages and
@@ -355,7 +352,7 @@ export function HomePage() {
                     onChange={(event) => {
                       setQuestion(event.currentTarget.value);
                     }}
-                    placeholder="Ask about the support documents..."
+                    placeholder="How can I help you today?"
                     rows={3}
                     disabled={isSending}
                     className="block w-full resize-none rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm leading-6 text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
@@ -395,7 +392,7 @@ export function HomePage() {
                   Knowledge base
                 </h2>
                 <p className="mt-1 text-sm leading-6 text-slate-500">
-                  Upload a UTF-8 text document or movie JSON dataset for SupportOps to retrieve.
+                  Upload a UTF-8 text document or JSON dataset for SupportOps to retrieve.
                 </p>
               </div>
 
@@ -417,7 +414,7 @@ export function HomePage() {
                     className="block w-full text-sm text-slate-500 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200"
                   />
                   <p className="mt-2 text-xs leading-5 text-slate-400">
-                    TXT or movie JSON · UTF-8 · maximum 30 MiB
+                    TXT or JSON · UTF-8 · maximum 30 MiB
                   </p>
                 </div>
 

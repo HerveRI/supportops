@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
@@ -13,7 +14,14 @@ from app.models.user import User
 from app.schemas.document import DocumentResponse
 from app.services.chunking import chunk_extractions, store_document_chunks
 from app.services.embeddings import embed_document_chunks
+from app.services.keyword_search import (
+    invalidate_keyword_index,
+    rebuild_keyword_index,
+)
 from app.services.text_extraction import TextExtractionError, extract_document_texts
+
+logger = logging.getLogger(__name__)
+
 
 router = APIRouter(
     prefix="/admin/documents",
@@ -140,5 +148,11 @@ def upload_document(
             storage_path.unlink()
 
         raise
+
+    try:
+        rebuild_keyword_index(db_session)
+    except Exception:
+        invalidate_keyword_index()
+        logger.exception("Failed to rebuild BM25 index after document upload")
 
     return document
