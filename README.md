@@ -2,20 +2,24 @@
 
 An Agentic RAG application for answering questions from internal support documents.
 
-SupportOps combines FastAPI, React, PostgreSQL + pgvector, local Sentence Transformers embeddings, and Ollama with Qwen3.5 to provide authenticated semantic search, agent-driven retrieval, source citations.
+SupportOps combines FastAPI, React, PostgreSQL + pgvector, local Sentence Transformers embeddings, BM25 keyword retrieval, hybrid search with Reciprocal Rank Fusion (RRF), and local Ollama inference with Qwen3.5 to provide authenticated document retrieval, agent-driven question answering, and validated source citations.
 
 #### Part I - MVP - Complete
-#### Part II - In Progress - Better Retrieval with Hybrid Search, Better Agentic Calls, Chat Streaming, Conversation Persistance, Full Dockerization
+#### Part II - In Progress - Hybrid Retrieval, Streaming, Evaluation, Conversation Persistence, and Full Dockerization
+The hybrid retrieval baseline is implemented. Current Part II work focuses on streaming stability, retrieval evaluation, conversation persistence, and deployment improvements.
 
 ## Features
 - JWT authentication with HttpOnly cookies
 - Member and admin roles
-- Admin-only .txt document upload
-- Text extraction and overlapping chunking
+- Admin-only document upload and ingestion - json and txt
+- Text extraction and overlapping character chunking
 - Local all-MiniLM-L6-v2 embeddings
 - PostgreSQL VECTOR(384) storage with pgvector
 - Cosine-similarity semantic search
-- Simple RAG baseline
+- BM25 keyword search with lexical preprocessing and Porter stemming
+- In-memory BM25 inverted index
+- BM25 index rebuild after successful ingestion
+- Hybrid retrieval using Reciprocal Rank Fusion (RRF)
 - Explicit LLM tool calling for retrieval
 - Local Qwen3.5 inference through Ollama
 - React chat interface
@@ -24,8 +28,9 @@ SupportOps combines FastAPI, React, PostgreSQL + pgvector, local Sentence Transf
 - Session-only chat history
 
 ## Tech Stack
-- Backend: Python 3.12, FastAPI, SQLAlchemy 2, PostgreSQL 17, pgvector, Alembic, Psycopg 3, Sentence Transformers, HTTPX, Ollama, pytest, Ruff, uv
+- Backend: Python 3.12, FastAPI, SQLAlchemy 2, PostgreSQL 17, pgvector, Alembic, Psycopg 3, Sentence Transformers, NLTK, HTTPX, Ollama, pytest, Ruff, uv
 - Frontend: React, TypeScript, Vite, React Router, native fetch, Node.js 22
+- Retrieval: pgvector cosine similarity, BM25, Reciprocal Rank Fusion
 
 ## Getting Started
 
@@ -73,7 +78,8 @@ Frontend:
 - sentence-transformers/all-MiniLM-L6-v2
 
 The resulting normalized 384-dimensional vectors are stored in PostgreSQL using pgvector.
-Queries are embedded with the same model and ranked using cosine distance.
+
+User queries are embedded with the same model and ranked using cosine distance. Semantic queries use the original natural-language query rather than BM25 preprocessing.
 
 ## Agent Flow
 
@@ -105,15 +111,30 @@ Backend:
 - npm run lint
 - npm run build
 
-### Current Scope
+### Current Part II Work
 
-Part I keeps the system simple and does not yet include:
+The following work remains in progress:
+
+- Stabilize streamed Ollama responses
+- Benchmark retrieval and generation latency
+- Aggregate structured movie results by title before RRF
+- Run golden-dataset evaluation across BM25, semantic, and hybrid retrieval
+- Compare Precision@K, Recall@K, F1@K, MRR, and latency
+- Persistent conversation history
+- Full Dockerized application workflow
+
+#### Current Limitations
+
+SupportOps does not currently include:
 
 - PDF or DOCX ingestion
-- streaming responses
-- persistent conversation history
-- hybrid search
-- reranking
-- vector indexes such as HNSW or IVFFlat
-- background workers
-- generalized multi-agent orchestration
+- Persistent conversation history
+- Query rewriting or LLM query enhancement
+- Cross-encoder reranking
+- LLM reranking
+- Vector indexes such as HNSW or IVFFlat
+- Background workers
+- A document deletion API
+- Persisted BM25 indexes
+- Generalized multi-agent orchestration
+
