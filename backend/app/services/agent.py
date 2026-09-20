@@ -6,12 +6,11 @@ from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
+from app.services.hybrid_search import HybridSearchResult, hybrid_search
 from app.services.llm import LLMError, chat_with_ollama, stream_chat_with_ollama
-from app.services.retrieval import (
-    DEFAULT_TOP_K,
-    SimilaritySearchResult,
-    search_knowledge_base,
-)
+from app.services.retrieval import DEFAULT_TOP_K, SimilaritySearchResult
+
+SearchResult = SimilaritySearchResult | HybridSearchResult
 
 CITATION_PATTERN = re.compile(r"\[(\d+)\]")
 
@@ -19,7 +18,7 @@ CITATION_PATTERN = re.compile(r"\[(\d+)\]")
 @dataclass(frozen=True)
 class AgentCitation:
     citation_number: int
-    source: SimilaritySearchResult
+    source: SearchResult
 
 
 @dataclass(frozen=True)
@@ -52,7 +51,9 @@ SEARCH_TOOL = {
                 "query": {
                     "type": "string",
                     "description": (
-                        "A semantic search query for the internal documents."
+                        "A semantic search query for the internal documents. "
+                        "Preserve exact names, titles, identifiers, and product terms "
+                        "from the user's question."
                     ),
                 },
             },
@@ -82,9 +83,22 @@ Simple greetings do not require a tool call.
 """.strip()
 
 
+def search_knowledge_base(
+    db: Session,
+    query: str,
+    top_k: int = DEFAULT_TOP_K,
+) -> list[SearchResult]:
+    """Search internal documents with BM25, semantic search, and RRF."""
+    return hybrid_search(
+        db=db,
+        query=query,
+        top_k=top_k,
+    )
+
+
 def _serialize_search_results(
-    results: list[SimilaritySearchResult],
-    sources: list[SimilaritySearchResult],
+    results: list[SearchResult],
+    sources: list[SearchResult],
     source_numbers: dict[str, int],
 ) -> str:
     """Convert retrieved chunks into numbered tool-result content"""
@@ -99,22 +113,28 @@ def _serialize_search_results(
             source_numbers[chunk_key] = len(sources)
 
         citation_number = source_numbers[chunk_key]
-        data.append(
-            {
-                "citation": f"[{citation_number}]",
-                "filename": result.source_name,
-                "chunk_index": result.chunk_index,
-                "text": result.text,
-                "cosine_similarity": result.cosine_similarity,
-            }
-        )
+        serialized_result = {
+            "citation": f"[{citation_number}]",
+            "filename": result.source_name,
+            "chunk_index": result.chunk_index,
+            "text": result.text,
+        }
+
+        if isinstance(result, HybridSearchResult):
+            serialized_result["rrf_score"] = result.rrf_score
+            serialized_result["keyword_rank"] = result.keyword_rank
+            serialized_result["semantic_rank"] = result.semantic_rank
+        else:
+            serialized_result["cosine_similarity"] = result.cosine_similarity
+
+        data.append(serialized_result)
 
     return json.dumps(data, ensure_ascii=False)
 
 
 def _extract_citations(
     answer: str,
-    sources: list[SimilaritySearchResult],
+    sources: list[SearchResult],
 ) -> list[AgentCitation]:
     """Return valid sources actually cited by the model."""
 
@@ -187,7 +207,7 @@ def answer_with_agent(
 
     messages.append(first_message)
 
-    sources: list[SimilaritySearchResult] = []
+    sources: list[SearchResult] = []
     source_numbers: dict[str, int] = {}
 
     for tool_call in tool_calls:
@@ -292,7 +312,7 @@ def stream_answer_with_agent(
 
     messages.append(first_message)
 
-    sources: list[SimilaritySearchResult] = []
+    sources: list[SearchResult] = []
     source_numbers: dict[str, int] = {}
 
     for tool_call in tool_calls:

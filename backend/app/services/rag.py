@@ -2,12 +2,11 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
+from app.services.hybrid_search import HybridSearchResult, hybrid_search
 from app.services.llm import generate_chat_response
-from app.services.retrieval import (
-    DEFAULT_TOP_K,
-    SimilaritySearchResult,
-    search_knowledge_base,
-)
+from app.services.retrieval import DEFAULT_TOP_K, SimilaritySearchResult
+
+SearchResult = SimilaritySearchResult | HybridSearchResult
 
 SYSTEM_PROMPT = """
 You are SupportOps, an assistant that answers questions using 
@@ -24,10 +23,10 @@ Do not invent information.
 @dataclass(frozen=True)
 class RagResult:
     answer: str
-    sources: list[SimilaritySearchResult]
+    sources: list[SearchResult]
 
 
-def _build_context(results: list[SimilaritySearchResult]) -> str:
+def _build_context(results: list[SearchResult]) -> str:
     """Build the document context supplied to the language model."""
 
     context_parts = []
@@ -42,6 +41,15 @@ Chunk: {result.chunk_index}
         )
 
     return "\n\n---\n\n".join(context_parts)
+
+
+def search_knowledge_base(
+    db: Session,
+    query: str,
+    top_k: int = DEFAULT_TOP_K,
+) -> list[SearchResult]:
+    """Search internal documents with BM25, semantic search, and RRF."""
+    return hybrid_search(db=db, query=query, top_k=top_k)
 
 
 def answer_question(
