@@ -4,6 +4,9 @@ An Agentic RAG application for answering questions from internal support documen
 
 SupportOps combines FastAPI, React, PostgreSQL + pgvector, local Sentence Transformers embeddings, BM25 keyword retrieval, hybrid search with Reciprocal Rank Fusion (RRF), and local Ollama inference with Qwen3.5 to provide authenticated document retrieval, agent-driven question answering, and validated source citations.
 
+### Demo
+https://github.com/user-attachments/assets/4f43cd04-d07f-4d82-bd44-e4bf592bf52e
+
 #### Part I - MVP - Complete
 #### Part II - In Progress - Hybrid Retrieval, Streaming, Evaluation, Conversation Persistence, and Full Dockerization
 The hybrid retrieval baseline is implemented. Current Part II work focuses on streaming stability, retrieval evaluation, conversation persistence, and deployment improvements.
